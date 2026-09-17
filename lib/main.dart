@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'models/expense.dart';
 import 'services/database_helper.dart';
+import 'services/exchange_rate_service.dart';
 
 void main() {
   runApp(const MyApp());
@@ -93,6 +94,139 @@ Color _colorForCategory(String category) {
   }
 }
 
+// ============================================================
+// CURRENCY CONVERTER CARD - StatefulWidget because it needs to
+// hold onto the Future itself (_ratesFuture) between rebuilds,
+// so FutureBuilder can watch the SAME Future across multiple
+// rebuilds rather than accidentally starting a new API call
+// every single time the widget rebuilds.
+// ============================================================
+class CurrencyConverterCard extends StatefulWidget {
+  final double totalInUsd;
+
+  const CurrencyConverterCard({super.key, required this.totalInUsd});
+
+  @override
+  State<CurrencyConverterCard> createState() => _CurrencyConverterCardState();
+}
+
+class _CurrencyConverterCardState extends State<CurrencyConverterCard> {
+  final ExchangeRateService _service = ExchangeRateService();
+
+  // null = haven't fetched yet (button not pressed). Once set, this
+  // is the SAME Future object across rebuilds - critical detail below.
+  Future<Map<String, double>>? _ratesFuture;
+
+  // The currently selected target currency - defaults to MYR.
+  String _selectedCurrency = 'MYR';
+  final List<String> _currencyOptions = ['MYR', 'EUR', 'GBP', 'JPY', 'SGD', 'AUD'];
+
+  void _fetchRates() {
+    setState(() {
+      _ratesFuture = _service.fetchRates();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Text('Convert total to ', style: TextStyle(fontWeight: FontWeight.bold)),
+                    DropdownButton<String>(
+                      value: _selectedCurrency,
+                      items: _currencyOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedCurrency = value!;
+                          // Changing currency doesn't need a NEW api call -
+                          // we already have every currency's rate from the
+                          // last fetch, we're just reading a different key.
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                TextButton(onPressed: _fetchRates, child: const Text('Fetch Rate')),
+              ],
+            ),
+            // If no fetch has happened yet, just show a placeholder message.
+            if (_ratesFuture == null)
+              const Text('Tap "Fetch Rate" to see the live conversion'),
+
+            // FutureBuilder only appears once _ratesFuture is non-null -
+            // this is what actually watches the Future's state over time.
+            if (_ratesFuture != null)
+              FutureBuilder<Map<String, double>>(
+                future: _ratesFuture,
+                builder: (context, snapshot) {
+                  // STATE 1: still waiting on the network call.
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 8),
+                          Text('Fetching live rate...'),
+                        ],
+                      ),
+                    );
+                  }
+
+                  // STATE 2: the Future completed, but with an error
+                  // (thrown by our service - e.g. bad status code, or
+                  // a genuine network failure like no internet).
+                  if (snapshot.hasError) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Failed to fetch rate: ${snapshot.error}',
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    );
+                  }
+
+                  // STATE 3: success - snapshot.data is now the actual
+                  // Map<String, double> our service returned.
+                  final rates = snapshot.data!;
+                  final selectedRate = rates[_selectedCurrency];
+                  if (selectedRate == null) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text('$_selectedCurrency rate not found in response'),
+                    );
+                  }
+                  final converted = widget.totalInUsd * selectedRate;
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '\$${widget.totalInUsd.toStringAsFixed(2)} \u2248 $_selectedCurrency ${converted.toStringAsFixed(2)}',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -138,6 +272,8 @@ class ExpenseListScreen extends StatelessWidget {
               ],
             ),
           ),
+
+          CurrencyConverterCard(totalInUsd: model.total),
 
           // --- CHART SECTION (only shown when there's data to chart) ---
           if (model.expenses.isNotEmpty)
