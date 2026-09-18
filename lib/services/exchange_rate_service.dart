@@ -37,4 +37,24 @@ class ExchangeRateService {
     // casting/conversion before you can treat them as a specific type.
     return rawRates.map((key, value) => MapEntry(key, (value as num).toDouble()));
   }
+
+  // NEW: the API only ever gives us USD-based rates (1 USD = ? X),
+  // but our app's base currency is MYR now. This re-derives every
+  // rate as "1 [baseCurrency] = ? X" using cross-multiplication:
+  //   1 USD = rawRates['MYR'] MYR   ...and...   1 USD = rawRates['EUR'] EUR
+  //   => 1 MYR = rawRates['EUR'] / rawRates['MYR']  EUR
+  // Dividing every USD-based rate by the USD->base rate re-bases
+  // the whole table in one pass, without a second network call.
+  Future<Map<String, double>> fetchRatesRelativeTo(String baseCurrency) async {
+    final usdBasedRates = await fetchRates();
+
+    final baseRate = usdBasedRates[baseCurrency];
+    if (baseRate == null) {
+      throw Exception('Base currency "$baseCurrency" not found in API response');
+    }
+
+    return usdBasedRates.map((currency, usdRate) {
+      return MapEntry(currency, usdRate / baseRate);
+    });
+  }
 }
