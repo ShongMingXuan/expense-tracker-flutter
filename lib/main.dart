@@ -17,6 +17,18 @@ class ExpenseModel extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
   List<Expense> _expenses = [];
 
+  // NEW: shared currency state, visible to every screen via
+  // context.watch<ExpenseModel>(). MYR is our storage/base currency -
+  // amounts are always ENTERED and STORED in MYR. displayCurrency is
+  // purely what the user wants the total CONVERTED to for viewing,
+  // it never changes what's actually saved to the database.
+  String displayCurrency = 'MYR';
+
+  void setDisplayCurrency(String currency) {
+    displayCurrency = currency;
+    notifyListeners();
+  }
+
   List<Expense> get expenses => List.unmodifiable(_expenses);
   double get total => _expenses.fold(0, (sum, e) => sum + e.amount);
 
@@ -102,9 +114,9 @@ Color _colorForCategory(String category) {
 // every single time the widget rebuilds.
 // ============================================================
 class CurrencyConverterCard extends StatefulWidget {
-  final double totalInUsd;
+  final double totalInMyr;
 
-  const CurrencyConverterCard({super.key, required this.totalInUsd});
+  const CurrencyConverterCard({super.key, required this.totalInMyr});
 
   @override
   State<CurrencyConverterCard> createState() => _CurrencyConverterCardState();
@@ -117,18 +129,24 @@ class _CurrencyConverterCardState extends State<CurrencyConverterCard> {
   // is the SAME Future object across rebuilds - critical detail below.
   Future<Map<String, double>>? _ratesFuture;
 
-  // The currently selected target currency - defaults to MYR.
-  String _selectedCurrency = 'MYR';
-  final List<String> _currencyOptions = ['MYR', 'EUR', 'GBP', 'JPY', 'SGD', 'AUD'];
+  // MYR itself doesn't need "conversion" - it's already the stored
+  // amount - so it's left out of this list and handled as a special
+  // case in build() below.
+  final List<String> _currencyOptions = ['USD', 'EUR', 'GBP', 'JPY', 'SGD', 'AUD'];
 
   void _fetchRates() {
     setState(() {
-      _ratesFuture = _service.fetchRates();
+      // Rebase to MYR instead of the API's raw USD-based rates.
+      _ratesFuture = _service.fetchRatesRelativeTo('MYR');
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    // Currency selection now lives on ExpenseModel, not local state -
+    // this is what lets any other screen read/react to it later too.
+    final selectedCurrency = context.watch<ExpenseModel>().displayCurrency;
+
     return Card(
       margin: const EdgeInsets.all(16),
       child: Padding(
@@ -143,15 +161,15 @@ class _CurrencyConverterCardState extends State<CurrencyConverterCard> {
                   children: [
                     const Text('Convert total to ', style: TextStyle(fontWeight: FontWeight.bold)),
                     DropdownButton<String>(
-                      value: _selectedCurrency,
-                      items: _currencyOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      value: selectedCurrency,
+                      items: [
+                        const DropdownMenuItem(value: 'MYR', child: Text('MYR')),
+                        ..._currencyOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))),
+                      ],
                       onChanged: (value) {
-                        setState(() {
-                          _selectedCurrency = value!;
-                          // Changing currency doesn't need a NEW api call -
-                          // we already have every currency's rate from the
-                          // last fetch, we're just reading a different key.
-                        });
+                        // Write through the shared model instead of setState -
+                        // read() because we're firing an action, not listening.
+                        context.read<ExpenseModel>().setDisplayCurrency(value!);
                       },
                     ),
                   ],
@@ -159,13 +177,26 @@ class _CurrencyConverterCardState extends State<CurrencyConverterCard> {
                 TextButton(onPressed: _fetchRates, child: const Text('Fetch Rate')),
               ],
             ),
-            // If no fetch has happened yet, just show a placeholder message.
-            if (_ratesFuture == null)
+
+            // MYR selected: nothing to convert or fetch, just show the
+            // stored total directly.
+            if (selectedCurrency == 'MYR')
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'RM ${widget.totalInMyr.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+
+            // A different currency is selected, but we haven't fetched
+            // rates yet this session.
+            if (selectedCurrency != 'MYR' && _ratesFuture == null)
               const Text('Tap "Fetch Rate" to see the live conversion'),
 
             // FutureBuilder only appears once _ratesFuture is non-null -
             // this is what actually watches the Future's state over time.
-            if (_ratesFuture != null)
+            if (selectedCurrency != 'MYR' && _ratesFuture != null)
               FutureBuilder<Map<String, double>>(
                 future: _ratesFuture,
                 builder: (context, snapshot) {
@@ -201,20 +232,21 @@ class _CurrencyConverterCardState extends State<CurrencyConverterCard> {
                   }
 
                   // STATE 3: success - snapshot.data is now the actual
-                  // Map<String, double> our service returned.
+                  // Map<String, double> our service returned, already
+                  // rebased so keys mean "1 MYR = ? X".
                   final rates = snapshot.data!;
-                  final selectedRate = rates[_selectedCurrency];
+                  final selectedRate = rates[selectedCurrency];
                   if (selectedRate == null) {
                     return Padding(
                       padding: const EdgeInsets.only(top: 8),
-                      child: Text('$_selectedCurrency rate not found in response'),
+                      child: Text('$selectedCurrency rate not found in response'),
                     );
                   }
-                  final converted = widget.totalInUsd * selectedRate;
+                  final converted = widget.totalInMyr * selectedRate;
                   return Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      '\$${widget.totalInUsd.toStringAsFixed(2)} \u2248 $_selectedCurrency ${converted.toStringAsFixed(2)}',
+                      'RM ${widget.totalInMyr.toStringAsFixed(2)} \u2248 $selectedCurrency ${converted.toStringAsFixed(2)}',
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                   );
@@ -256,151 +288,184 @@ class ExpenseListScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('My Expenses')),
-      body: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: Colors.green.shade100,
-            width: double.infinity,
-            child: Column(
-              children: [
-                const Text('Total Spent'),
-                Text(
-                  '\$${model.total.toStringAsFixed(2)}',
-                  style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                ),
-              ],
+      // CustomScrollView + slivers instead of Column + Expanded(ListView) -
+      // a Column only lets ONE child scroll (whichever one you wrap in
+      // Expanded+ListView), everything else stays pinned. A
+      // CustomScrollView makes the WHOLE page one continuous scroll area,
+      // so the total/converter/chart scroll away naturally along with
+      // the expense list, instead of staying fixed at the top.
+      body: CustomScrollView(
+        slivers: [
+          // SliverToBoxAdapter: "drop this ordinary widget into the
+          // scroll" - used for anything that isn't itself a list.
+          SliverToBoxAdapter(
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              color: Colors.green.shade100,
+              width: double.infinity,
+              child: Column(
+                children: [
+                  const Text('Total Spent'),
+                  Text(
+                    'RM ${model.total.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
             ),
           ),
 
-          CurrencyConverterCard(totalInUsd: model.total),
+          SliverToBoxAdapter(
+            child: CurrencyConverterCard(totalInMyr: model.total),
+          ),
 
           // --- CHART SECTION (only shown when there's data to chart) ---
           if (model.expenses.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: SizedBox(
-                height: 160,
-                child: Row(
-                  children: [
-                    // The actual pie chart - takes up the left half.
-                    Expanded(
-                      child: PieChart(
-                        PieChartData(
-                          sections: model.categoryTotals.entries.map((entry) {
-                            return PieChartSectionData(
-                              value: entry.value,
-                              color: _colorForCategory(entry.key),
-                              // showTitle: false keeps the slices clean -
-                              // the legend on the right explains what's what.
-                              showTitle: false,
-                            );
-                          }).toList(),
-                          sectionsSpace: 2,
-                          centerSpaceRadius: 30,
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  height: 160,
+                  child: Row(
+                    children: [
+                      // The actual pie chart - takes up the left half.
+                      Expanded(
+                        child: PieChart(
+                          PieChartData(
+                            sections: model.categoryTotals.entries.map((entry) {
+                              return PieChartSectionData(
+                                value: entry.value,
+                                color: _colorForCategory(entry.key),
+                                // showTitle: false keeps the slices clean -
+                                // the legend on the right explains what's what.
+                                showTitle: false,
+                              );
+                            }).toList(),
+                            sectionsSpace: 2,
+                            centerSpaceRadius: 30,
+                          ),
                         ),
                       ),
-                    ),
-                    // A simple text legend on the right, since PieChart
-                    // itself doesn't draw one for you automatically.
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: model.categoryTotals.entries.map((entry) {
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 2),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 12,
-                                  height: 12,
-                                  color: _colorForCategory(entry.key),
-                                ),
-                                const SizedBox(width: 8),
-                                Text('${entry.key}: \$${entry.value.toStringAsFixed(2)}'),
-                              ],
-                            ),
-                          );
-                        }).toList(),
+                      // A simple text legend on the right, since PieChart
+                      // itself doesn't draw one for you automatically.
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: model.categoryTotals.entries.map((entry) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 12,
+                                    height: 12,
+                                    color: _colorForCategory(entry.key),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // Expanded + ellipsis: if the label is too
+                                  // long for the available space, it truncates
+                                  // with "..." instead of overflowing the Row.
+                                  Expanded(
+                                    child: Text(
+                                      '${entry.key}: RM ${entry.value.toStringAsFixed(2)}',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
 
-          Expanded(
-            child: model.expenses.isEmpty
-                ? const Center(child: Text('No expenses yet - tap + to add one'))
-                : ListView.builder(
-                    itemCount: model.expenses.length,
-                    itemBuilder: (context, index) {
-                      final expense = model.expenses[index];
-                      return Dismissible(
-                        // Key must be unique per item - the database id is
-                        // perfect for this, since it never changes or repeats.
-                        // Without a proper key, Flutter can get confused about
-                        // which widget is which after one gets removed.
-                        key: ValueKey(expense.id),
-                        direction: DismissDirection.endToStart, // swipe right-to-left only
-                        background: Container(
-                          color: Colors.red,
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: const Icon(Icons.delete, color: Colors.white),
-                        ),
-                        // confirmDismiss lets you show a confirmation dialog
-                        // BEFORE the item actually disappears - returning
-                        // false/null cancels the dismiss, keeping the item.
-                        confirmDismiss: (direction) async {
-                          return await showDialog<bool>(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text('Delete expense?'),
-                              content: Text('Delete "${expense.category}" (\$${expense.amount.toStringAsFixed(2)})?'),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, false),
-                                  child: const Text('Cancel'),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, true),
-                                  child: const Text('Delete'),
-                                ),
-                              ],
+          // The expense list itself. Empty state uses SliverToBoxAdapter
+          // (just one static widget); non-empty state uses SliverList so
+          // each row is lazily built as you scroll, same laziness ListView
+          // .builder used to give you, just inside the shared scroll now.
+          if (model.expenses.isEmpty)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 40),
+                child: Center(child: Text('No expenses yet - tap + to add one')),
+              ),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final expense = model.expenses[index];
+                  return Dismissible(
+                    // Key must be unique per item - the database id is
+                    // perfect for this, since it never changes or repeats.
+                    // Without a proper key, Flutter can get confused about
+                    // which widget is which after one gets removed.
+                    key: ValueKey(expense.id),
+                    direction: DismissDirection.endToStart, // swipe right-to-left only
+                    background: Container(
+                      color: Colors.red,
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: const Icon(Icons.delete, color: Colors.white),
+                    ),
+                    // confirmDismiss lets you show a confirmation dialog
+                    // BEFORE the item actually disappears - returning
+                    // false/null cancels the dismiss, keeping the item.
+                    confirmDismiss: (direction) async {
+                      return await showDialog<bool>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('Delete expense?'),
+                          content: Text('Delete "${expense.category}" (RM ${expense.amount.toStringAsFixed(2)})?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              child: const Text('Cancel'),
                             ),
-                          );
-                        },
-                        // onDismissed only fires AFTER confirmDismiss returns
-                        // true - this is where the actual deletion happens.
-                        onDismissed: (direction) {
-                          context.read<ExpenseModel>().deleteExpense(expense.id!);
-                        },
-                        child: ListTile(
-                          title: Text(expense.category),
-                          subtitle: Text(
-                            (expense.note == null || expense.note!.isEmpty)
-                                ? expense.date
-                                : '${expense.date} - ${expense.note}',
-                          ),
-                          trailing: Text('\$${expense.amount.toStringAsFixed(2)}'),
-                          // Tapping opens the SAME AddExpenseScreen, but this
-                          // time WITH an expense passed in - that's the signal
-                          // that puts it into "editing" mode instead of "adding".
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => AddExpenseScreen(expenseToEdit: expense),
-                              ),
-                            );
-                          },
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, true),
+                              child: const Text('Delete'),
+                            ),
+                          ],
                         ),
                       );
                     },
-                  ),
-          ),
+                    // onDismissed only fires AFTER confirmDismiss returns
+                    // true - this is where the actual deletion happens.
+                    onDismissed: (direction) {
+                      context.read<ExpenseModel>().deleteExpense(expense.id!);
+                    },
+                    child: ListTile(
+                      title: Text(expense.category),
+                      subtitle: Text(
+                        (expense.note == null || expense.note!.isEmpty)
+                            ? expense.date
+                            : '${expense.date} - ${expense.note}',
+                      ),
+                      trailing: Text('RM ${expense.amount.toStringAsFixed(2)}'),
+                      // Tapping opens the SAME AddExpenseScreen, but this
+                      // time WITH an expense passed in - that's the signal
+                      // that puts it into "editing" mode instead of "adding".
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => AddExpenseScreen(expenseToEdit: expense),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+                childCount: model.expenses.length,
+              ),
+            ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -506,7 +571,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             TextField(
               controller: _amountController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Amount', prefixText: '\$ ', border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: 'Amount', prefixText: 'RM ', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
