@@ -106,6 +106,40 @@ Color _colorForCategory(String category) {
   }
 }
 
+// Turns a stored "YYYY-MM-DD" date string into a more readable label:
+// "Today"/"Yesterday" for the two most recent days, a weekday name
+// ("Monday", "Tuesday"...) for anything within the last week, and the
+// actual date once it's older than that - similar to how WhatsApp,
+// Slack, etc. label message timestamps.
+String _relativeDateLabel(String storedDate) {
+  final date = DateTime.tryParse(storedDate);
+  // Old expenses saved before the date picker existed may still have
+  // the literal string "Today" stored - tryParse returns null for
+  // those, so we just show the raw (bad) value rather than crashing.
+  if (date == null) return storedDate;
+
+  final now = DateTime.now();
+  // Truncate both to midnight before comparing, so "2:00 PM today" vs
+  // "11:00 PM yesterday" doesn't accidentally count as > 24 hours apart.
+  final today = DateTime(now.year, now.month, now.day);
+  final thatDay = DateTime(date.year, date.month, date.day);
+  final daysAgo = today.difference(thatDay).inDays;
+
+  if (daysAgo == 0) return 'Today';
+  if (daysAgo == 1) return 'Yesterday';
+
+  if (daysAgo > 1 && daysAgo < 7) {
+    const weekdayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    // DateTime.weekday is 1-7 (Monday=1), so subtract 1 for a 0-based index.
+    return weekdayNames[date.weekday - 1];
+  }
+
+  // Older than a week (or the rare same-day-but-negative edge case) -
+  // fall back to a readable actual date, e.g. "12 Sep 2026".
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return '${date.day} ${monthNames[date.month - 1]} ${date.year}';
+}
+
 // ============================================================
 // CURRENCY CONVERTER CARD - StatefulWidget because it needs to
 // hold onto the Future itself (_ratesFuture) between rebuilds,
@@ -271,7 +305,7 @@ class MyApp extends StatelessWidget {
       // loadExpenses() on that same object, then use the object
       // (not loadExpenses()'s return value) as the actual result."
       child: MaterialApp(
-        title: 'Expense Tracker',
+        title: 'Expense Tracker - Database Version',
         theme: ThemeData(primarySwatch: Colors.green),
         home: const ExpenseListScreen(),
       ),
@@ -445,8 +479,8 @@ class ExpenseListScreen extends StatelessWidget {
                       title: Text(expense.category),
                       subtitle: Text(
                         (expense.note == null || expense.note!.isEmpty)
-                            ? expense.date
-                            : '${expense.date} - ${expense.note}',
+                            ? _relativeDateLabel(expense.date)
+                            : '${_relativeDateLabel(expense.date)} - ${expense.note}',
                       ),
                       trailing: Text('RM ${expense.amount.toStringAsFixed(2)}'),
                       // Tapping opens the SAME AddExpenseScreen, but this
@@ -496,6 +530,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   late final TextEditingController _amountController;
   late final TextEditingController _noteController;
   late String _selectedCategory;
+  late DateTime _selectedDate;
   final List<String> _categories = ['Food', 'Transport', 'Groceries', 'Entertainment', 'Other'];
 
   // A quick helper to check which mode we're in, used in a few places.
@@ -511,6 +546,43 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     _amountController = TextEditingController(text: existing?.amount.toString() ?? '');
     _noteController = TextEditingController(text: existing?.note ?? '');
     _selectedCategory = existing?.category ?? 'Food';
+
+    // Old expenses saved before this feature existed have the literal
+    // string "Today" stored as their date, which DateTime.tryParse()
+    // can't understand - it returns null for anything it can't parse.
+    // In that case (or when adding a brand new expense) we fall back
+    // to DateTime.now(), so the field always has SOMETHING valid to show.
+    _selectedDate = existing != null
+        ? (DateTime.tryParse(existing.date) ?? DateTime.now())
+        : DateTime.now();
+  }
+
+  // Formats a DateTime as "YYYY-MM-DD" - a plain, sortable, unambiguous
+  // format to store in the database. padLeft(2, '0') ensures single-digit
+  // months/days get a leading zero (e.g. "2026-09-05", not "2026-9-5").
+  String _formatDate(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
+  // showDatePicker returns a Future<DateTime?> - same "wait for the user
+  // to finish interacting" pattern as showDialog in the delete confirmation
+  // on the list screen. Returns null if the user backs out without picking.
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+    // picked is null if the user tapped Cancel/backed out - in that
+    // case, leave _selectedDate exactly as it was.
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
   }
 
   @override
@@ -532,14 +604,13 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     final model = context.read<ExpenseModel>();
 
     if (_isEditing) {
-      // Editing: keep the same id and date, only the user-editable
-      // fields change. Passing the original id is what tells
-      // updateExpense() WHICH row to overwrite.
+      // Editing: keep the same id, but the date is now editable too -
+      // formatted from whatever the user picked (or left unchanged).
       final updatedExpense = Expense(
         id: widget.expenseToEdit!.id,
         category: _selectedCategory,
         amount: amount,
-        date: widget.expenseToEdit!.date,
+        date: _formatDate(_selectedDate),
         note: _noteController.text,
       );
       await model.updateExpense(updatedExpense);
@@ -547,7 +618,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       final newExpense = Expense(
         category: _selectedCategory,
         amount: amount,
-        date: 'Today',
+        date: _formatDate(_selectedDate),
         note: _noteController.text,
       );
       await model.addExpense(newExpense);
@@ -579,6 +650,19 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               decoration: const InputDecoration(labelText: 'Category', border: OutlineInputBorder()),
               items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
               onChanged: (v) => setState(() => _selectedCategory = v!),
+            ),
+            const SizedBox(height: 16),
+            // InkWell makes the whole field tappable (not just some inner
+            // button), and wraps an InputDecorator so it LOOKS like a
+            // normal form field even though it's actually read-only text
+            // plus a tap handler - the real editing happens in the
+            // showDatePicker dialog that _pickDate() opens.
+            InkWell(
+              onTap: _pickDate,
+              child: InputDecorator(
+                decoration: const InputDecoration(labelText: 'Date', border: OutlineInputBorder()),
+                child: Text(_formatDate(_selectedDate)),
+              ),
             ),
             const SizedBox(height: 16),
             TextField(
