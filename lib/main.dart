@@ -239,7 +239,7 @@ class MyApp extends StatelessWidget {
       // loadExpenses() on that same object, then use the object
       // (not loadExpenses()'s return value) as the actual result."
       child: MaterialApp(
-        title: 'Expense Tracker - Database Version',
+        title: 'Green Expense Tracker',
         theme: ThemeData(primarySwatch: Colors.green),
         home: const ExpenseListScreen(),
       ),
