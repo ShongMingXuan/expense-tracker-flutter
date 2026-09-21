@@ -1,0 +1,9 @@
+[33m842b75f[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature/date-picker[m[33m)[m Add date picker and relative date labels for the expense list
+[33mc1a1917[m[33m ([m[1;33mtag: [m[1;33mv1.1[m[33m, [m[1;31morigin/master[m[33m, [m[1;32mmaster[m[33m)[m Mergebranch 'feature/rm-base-currency' turning the main UI's currency into MYR for better suited to user
+[33m264a326[m[33m ([m[1;31morigin/feature/rm-base-currency[m[33m, [m[1;32mfeature/rm-base-currency[m[33m)[m Rebase currency to MYR, fix legend overflow, make page scrollable
+[33m72b2094[m Merge branch 'feature/title-green'
+[33m565bb8f[m[33m ([m[1;31morigin/feature/title-green[m[33m, [m[1;32mfeature/title-green[m[33m)[m Rename app to Green Expense Tracker
+[33m3a9de80[m[33m ([m[1;31morigin/feature/title-blue[m[33m, [m[1;32mfeature/title-blue[m[33m)[m Rename app to Blue Expense Tracker
+[33m1220122[m[33m ([m[1;33mtag: [m[1;33mv1.0[m[33m, [m[1;31morigin/feature/exchange-rate[m[33m, [m[1;32mfeature/exchange-rate[m[33m)[m Add currency converter with selectable currency dropdown
+[33me0ce4fe[m Stop tracking local database file
+[33md637999[m Initial commit - expense tracker with navigation, provider, sqlite, charts
