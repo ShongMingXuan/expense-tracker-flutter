@@ -65,4 +65,10 @@ class DatabaseHelper {
     final db = await database;
     return db.delete('expenses', where: 'id = ?', whereArgs: [id]);
   }
+
+
+  Future<int> clearAllExpenses() async {
+    final db = await database;
+    return db.delete('expenses');
+  }
 }

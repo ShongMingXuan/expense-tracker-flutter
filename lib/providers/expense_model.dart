@@ -82,4 +82,10 @@ class ExpenseModel extends ChangeNotifier {
     _expenses.removeWhere((expense) => expense.id == id);
     notifyListeners();
   }
+
+    Future<void> clearAllExpenses() async {
+      await _db.clearAllExpenses();
+      _expenses.clear();
+      notifyListeners();
+    }
 }
