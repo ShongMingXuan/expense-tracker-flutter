@@ -26,9 +26,6 @@ class _CurrencyConverterCardState extends State<CurrencyConverterCard> {
   // is the SAME Future object across rebuilds - critical detail below.
   Future<Map<String, double>>? _ratesFuture;
 
-  // MYR itself doesn't need "conversion" - it's already the stored
-  // amount - so it's left out of this list and handled as a special
-  // case in build() below.
   final List<String> _currencyOptions = ['USD', 'EUR', 'GBP', 'JPY', 'SGD', 'AUD'];
 
   void _fetchRates() {
