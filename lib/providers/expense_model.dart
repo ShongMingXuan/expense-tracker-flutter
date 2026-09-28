@@ -23,7 +23,7 @@ class ExpenseModel extends ChangeNotifier {
   void setDisplayCurrency(String currency) {
     displayCurrency = currency;
     notifyListeners();
-  }
+  } 
 
   List<Expense> get expenses => List.unmodifiable(_expenses);
   double get total => _expenses.fold(0, (sum, e) => sum + e.amount);

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/expense_model.dart';
 import 'screens/expense_list_screen.dart';
+import 'screens/login_screen.dart';
+import 'providers/user_provider.dart';
 
 void main() {
   runApp(const MyApp());
@@ -12,17 +14,22 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => ExpenseModel()..loadExpenses(),
-      // The ..loadExpenses() above uses Dart's "cascade" operator -
-      // it means "create the ExpenseModel, THEN immediately call
-      // loadExpenses() on that same object, then use the object
-      // (not loadExpenses()'s return value) as the actual result."
+    
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => ExpenseModel()..loadExpenses()),
+        ChangeNotifierProvider(create: (context) => UserProvider()),
+      ],
       child: MaterialApp(
         title: 'Expense Tracker - Database Version',
+        debugShowCheckedModeBanner: false,
         theme: ThemeData(primarySwatch: Colors.green),
-        home: const ExpenseListScreen(),
+        home: const LoginScreen(),
+        routes: {
+          '/home': (context) => const ExpenseListScreen(),
+        },
       ),
     );
+      // (not loadExpenses()'s return value) as the actual result."
   }
 }

@@ -35,9 +35,6 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     _noteController = TextEditingController(text: existing?.note ?? '');
     _selectedCategory = existing?.category ?? 'Food';
 
-    // Old expenses saved before this feature existed have the literal
-    // string "Today" stored as their date, which DateTime.tryParse()
-    // can't understand - it returns null for anything it can't parse.
     // In that case (or when adding a brand new expense) we fall back
     // to DateTime.now(), so the field always has SOMETHING valid to show.
     _selectedDate = existing != null
@@ -140,7 +137,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               onChanged: (v) => setState(() => _selectedCategory = v!),
             ),
             const SizedBox(height: 16),
-            // InkWell makes the whole field tappable (not just some inner
+            // InkWell makes the whole field tappable (not just some innegr
             // button), and wraps an InputDecorator so it LOOKS like a
             // normal form field even though it's actually read-only text
             // plus a tap handler - the real editing happens in the
