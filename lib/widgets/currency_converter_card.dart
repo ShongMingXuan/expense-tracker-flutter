@@ -43,7 +43,7 @@ class _CurrencyConverterCardState extends State<CurrencyConverterCard> {
     // Currency selection lives on ExpenseModel, not local state -
     // this is what lets any other screen read/react to it later too.
     final selectedCurrency = context.watch<ExpenseModel>().displayCurrency;
-
+  
     return Card(
       margin: const EdgeInsets.all(16),
       child: Padding(

@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../providers/expense_model.dart';
 import '../widgets/currency_converter_card.dart';
 import 'add_expense_screen.dart';
+import '../providers/user_provider.dart';
 
 // A simple, fixed mapping from category name to a color - used by
 // both the pie chart slices and the legend below it, so they stay
@@ -64,15 +65,28 @@ class ExpenseListScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final model = context.watch<ExpenseModel>();
-
+    final username = context.watch<UserProvider>().username;
     return Scaffold(
-      appBar: AppBar(title: const Text('My Expenses')),
+      appBar: AppBar(
+        title: Text('$username\'s Expenses'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () {
+              // Call the logout method in UserProvider
+              context.read<UserProvider>().logout();
+              // Navigate back to the login screen
+              Navigator.pushReplacementNamed(context, '/');
+            },
+          ),
+        ],
+      ),
+
       // CustomScrollView + slivers instead of Column + Expanded(ListView) -
       // a Column only lets ONE child scroll (whichever one you wrap in
       // Expanded+ListView), everything else stays pinned. A
       // CustomScrollView makes the WHOLE page one continuous scroll area,
       // so the total/converter/chart scroll away naturally along with
-      // the expense list, instead of staying fixed at the top.
       body: CustomScrollView(
         slivers: [
           // SliverToBoxAdapter: "drop this ordinary widget into the
