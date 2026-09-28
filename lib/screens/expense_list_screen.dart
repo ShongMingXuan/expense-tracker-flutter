@@ -75,6 +75,35 @@
                 Navigator.pushReplacementNamed(context, '/');
               },
             ),
+            IconButton(
+              icon: const Icon(Icons.delete_forever),
+              onPressed: () async {
+                final model = context.read<ExpenseModel>();
+                final confirm = await showDialog<bool>(
+                  // The context here is the BuildContext of the current widget, which is used to show the dialog.
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    // The title of the dialog is a question asking the user to confirm their action.
+                    title: const Text('Clear all expenses?'),
+                    // The content of the dialog is a warning message to the user.
+                    content: const Text('Are you sure you want to delete all expenses? This action cannot be undone.'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Clear All'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true) {
+                  await model.clearAllExpenses();
+                }
+              },
+            ),
           ],
         ),
 
